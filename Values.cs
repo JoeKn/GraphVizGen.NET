@@ -427,26 +427,23 @@ namespace GraphViz.Values
         private readonly GVDouble y;
         private readonly GVDouble z;
 
-        private readonly bool is3D;
-        private readonly bool isMarked;
-
-        public bool Is3D { get => is3D; }
-        public bool IsMarked { get => isMarked; }
+        public bool Is3D { get; }
+        public bool IsMarked { get; }
 
         public GVPoint(double x, double y)
         {
             this.x = new GVDouble(x);
             this.y = new GVDouble(y);
-            is3D = false;
-            isMarked = false;
+            Is3D = false;
+            IsMarked = false;
         }
 
         public GVPoint(double x, double y, bool marked)
         {
             this.x = new GVDouble(x);
             this.y = new GVDouble(y);
-            is3D = false;
-            isMarked = marked;
+            Is3D = false;
+            IsMarked = marked;
         }
 
         public GVPoint(double x, double y, double z)
@@ -454,8 +451,8 @@ namespace GraphViz.Values
             this.x = new GVDouble(x);
             this.y = new GVDouble(y);
             this.z = new GVDouble(z);
-            is3D = false;
-            isMarked = false;
+            Is3D = false;
+            IsMarked = false;
         }
 
         public GVPoint(double x, double y, double z, bool marked)
@@ -463,13 +460,13 @@ namespace GraphViz.Values
             this.x = new GVDouble(x);
             this.y = new GVDouble(y);
             this.z = new GVDouble(z);
-            is3D = false;
-            isMarked = marked;
+            Is3D = false;
+            IsMarked = marked;
         }
 
         public override string ToString()
         {
-            return x.ToString() + "," + y.ToString() + ((is3D)? z.ToString() : "") + ((isMarked)? "!" : "");
+            return x.ToString() + "," + y.ToString() + ((Is3D)? z.ToString() : "") + ((IsMarked)? "!" : "");
         }
 
     }

@@ -63,37 +63,6 @@ namespace GraphViz
         public GVException(string message) : base("GraphViz Generator: " + message) { }
     }
 
-
-    /// <summary>
-    /// The contexts allows the creation of more than one graph at the same time with
-    /// each graph in its own context. It also checks for uniqueness of ID.
-    /// </summary>
-    public class GVContext
-    {
-        private readonly Dictionary<string, GVGraph> namedObjects;
-        private GVGraph graph;
-        
-        /// <summary>
-        /// Constructs a new context. A context contains exactly one graph.
-        /// </summary>
-        public GVContext()
-        {
-            namedObjects = new Dictionary<string, GVGraph>();
-        }
-
-        public GVGraph CreateGraph(GVID name, bool isDirected)
-        {
-            if (namedObjects.ContainsKey(name.ToString())) throw new GVException("Dulicated Object ID (name)");
-            graph = new GVGraph(name);
-            lock (namedObjects)
-            {
-                namedObjects.Add(name.ToString(), graph);
-            }
-
-            return graph;
-        }
-    }
-
     /// <summary>
     /// Implements an optional strict graph, digraph or subgraph<para/>
     /// <i>graph</i> 	    : 	[ <b>strict</b> ] (<b>graph</b> | <b>digraph</b>) [ <i>ID</i> ] '<b>{</b>' <i>stmt_list</i> '<b>}</b>'<para/>
@@ -117,42 +86,54 @@ namespace GraphViz
     /// </summary>
     public class GVGraph : GVRoot
     {
+
+        public Dictionary<GVID, GVRoot> NamedObjects { get; }
+
+        private readonly GVID name;
+        private readonly bool isStrict;
+        private readonly bool isDirected;
+        private readonly bool isSubgraph;
+        private readonly bool isCluster;
+
         /// <summary>
-        /// Holds all available graph-types
+        /// Accessor for graph specific attributes.
         /// </summary>
-        public enum Type
-        {
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>graph</b> <i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            Graph = 0,
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>digraph</b> <i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            DiGraph,
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>strict graph</b> <i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            StrictGraph,
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>strict digraph</b> <i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            StrictDiGraph,
-            /// <summary>Enumariot for: <i>subgraph</i> : 	<b>subgraph</b> <i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            SubGraph,
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>graph</b> <b>cluster_</b><i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            ClusterGraph,
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>digraph</b> <b>cluster_</b><i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            ClusterDiGraph,
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>strict graph</b> <b>cluster_</b><i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            StrictClusterGraph,
-            /// <summary>Enumariot for: <i>graph</i> : 	 <b>strict digraph</b> <b>cluster_</b><i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            StrictClusterDiGraph,
-            /// <summary>Enumariot for: <i>subgraph</i> : 	<b>subgraph</b> <b>cluster_</b><i>name</i> '<b>{</b>' <i>stmt_list</i> '<b>}</b>'</summary>
-            ClusterSubGraph,
-        }
+        /// See <see cref="GVAttributes"/> for all available attributes.
+        public GVAttributes GraphAttributes { get; }
 
-        private string name;
-        private bool isStrict;
-        private bool isDirected;
-        private bool isSubgraph;
-        private bool isCluster;
+        /// <summary>
+        /// Accessor for node specific attributes.
+        /// </summary>
+        /// See <see cref="GVAttributes"/> for all available attributes.
+        public GVAttributes NodeAttributes { get; }
 
-        private GVAttributes attributes;
+        /// <summary>
+        /// Accessor for edge specific attributes.
+        /// </summary>
+        /// See <see cref="GVAttributes"/> for all available attributes.
+        public GVAttributes EdgeAttributes { get; }
 
+        /// <summary>
+        /// Holds all add subgraphs
+        /// </summary>
+        ///  See <see cref="GVGraph.AddSubgraph"/> for more information
+        private Queue<GVGraph> Subgraphs;
 
+        /// <summary>
+        /// Holds all add nodes
+        /// </summary>
+        ///  See <see cref="GVGraph.AddNode(GVID)"/> and
+        ///  <see cref="GVGraph.AddNode(GVID, GVPort)"/> for more information
+        private Queue<GVNode> Nodes;
+
+        /// <summary>
+        /// Holds all add edges
+        /// </summary>
+        private Queue<GVEdge> Edges;
+
+        /// <summary>
+        /// Holds all attribues supported by clustered (strict) graphs and digraphs
+        /// </summary>
         public GVAttributes.ID[] supportedByGraph = {
             GVAttributes.ID.Damping,
             GVAttributes.ID.K,
@@ -254,6 +235,9 @@ namespace GraphViz
             GVAttributes.ID.Xdotversion,
         };
 
+        /// <summary>
+        /// Holds all attribues supported by clustered (strict) graphs, digraphs and subgraphs
+        /// </summary>
         public GVAttributes.ID[] supportedByCluster = {
             GVAttributes.ID.K,
             GVAttributes.ID.URL,
@@ -287,112 +271,270 @@ namespace GraphViz
             GVAttributes.ID.Tooltip,
         };
 
+        /// <summary>
+        /// Holds all attribues supported by subgraphs
+        /// </summary>
         public GVAttributes.ID[] supportedBySubGraph = {
             GVAttributes.ID.Rank,
         };
 
 
-        private GVGraph(string name, Type type)
+        private GVGraph(GVID name, bool isStrict, bool isDirected, bool isSubgraph, bool isCluster, Dictionary<GVID, GVRoot> namedObjects)
         {
             this.name = name;
-            isStrict = false;
-            isDirected = false;
-            isSubgraph = false;
-            isCluster = false;
+            this.isStrict = isStrict;
+            this.isDirected = isDirected;
+            this.isSubgraph = isSubgraph;
+            this.isCluster = isCluster;
 
-            switch (type)
+            NamedObjects = namedObjects;
+            NamedObjects.Add(name, this);
+
+            if (isCluster)
             {
-                case Type.Graph:
-                    break;
-                case Type.DiGraph:
-                    isDirected = true;
-                    break;
-                case Type.StrictGraph:
-                    isStrict = true;
-                    break;
-                case Type.StrictDiGraph:
-                    isStrict = true;
-                    isDirected = true;
-                    break;
-                case Type.ClusterGraph:
-                    isCluster = true;
-                    break;
-                case Type.ClusterDiGraph:
-                    isDirected = true;
-                    isCluster = true;
-                    break;
-                case Type.StrictClusterGraph:
-                    isStrict = true;
-                    isCluster = true;
-                    break;
-                case Type.StrictClusterDiGraph:
-                    isStrict = true;
-                    isDirected = true;
-                    isCluster = true;
-                    break;
-                case Type.SubGraph:
-                    isSubgraph = true;
-                    break;
-                case Type.ClusterSubGraph:
-                    isSubgraph = true;
-                    isCluster = true;
-                    break;
+                if (isSubgraph)
+                {
+                    GraphAttributes = new GVAttributes(supportedBySubGraph.Union(supportedByCluster).ToArray());
+                }
+                else
+                {
+                    GraphAttributes = new GVAttributes(supportedByGraph.Union(supportedByCluster).ToArray());
+                }
             }
-            switch (type)
+            else
             {
-                case Type.Graph:
-                case Type.DiGraph:
-                case Type.StrictGraph:
-                case Type.StrictDiGraph:
-                    attributes = new GVAttributes(supportedByGraph);
-                    break;
-                case Type.ClusterGraph:
-                case Type.ClusterDiGraph:
-                case Type.StrictClusterGraph:
-                case Type.StrictClusterDiGraph:
-                    attributes = new GVAttributes(supportedByGraph.Union(supportedByCluster).ToArray());
-                    break;
-                case Type.SubGraph:
-                    attributes = new GVAttributes(supportedBySubGraph);
-                    break;
-                case Type.ClusterSubGraph:
-                    attributes = new GVAttributes(supportedBySubGraph.Union(supportedByCluster).ToArray());
-                    break;
+                if (isSubgraph)
+                {
+                    GraphAttributes = new GVAttributes(supportedBySubGraph);
+                }
+                else
+                {
+                    GraphAttributes = new GVAttributes(supportedByGraph);
+                }
             }
+            NodeAttributes = new GVAttributes(GVNode.SupportedAttributes);
+            EdgeAttributes = new GVAttributes(GVEdge.SupportedAttributes);
         }
 
-        public GVGraph(GVID name) : this(name.ToString(), Type.Graph) { }
+        public static GVGraph CreateGraph(GVID name, bool isStrict, bool isCluster)
+        {
+            Dictionary<GVID, GVRoot> namedObjects = new Dictionary<GVID, GVRoot>();
+            return new GVGraph(name, isStrict, false, false, isCluster, namedObjects);
+        }
 
-        public GVGraph(GVDouble name) : this(name.ToString(), Type.Graph) { }
+        public static GVGraph CreateDiGraph(GVID name, bool isStrict, bool isCluster)
+        {
+            Dictionary<GVID, GVRoot> namedObjects = new Dictionary<GVID, GVRoot>();
+            return new GVGraph(name, isStrict, true, false, isCluster, namedObjects);
+        }
 
-        public GVGraph(GVInt name) : this(name.ToString(), Type.Graph) { }
+        public GVGraph AddSubgraph(GVID name, bool isCluster)
+        {
+            GVGraph subgraph;
+            lock (NamedObjects)
+            {
+                if (NamedObjects.ContainsKey(name)) throw new GVException("Duplicated Identifier \"" + name + "\"");
+                subgraph = new GVGraph(name, false, false, true, isCluster, NamedObjects);
+                NamedObjects.Add(name, subgraph);
+            }
+            lock (Subgraphs)
+            {
+                Subgraphs.Enqueue(subgraph);
+            }
+            return subgraph;
+        }
 
-        public GVGraph(HTML.String name) : this(name.ToString(), Type.Graph) { }
+        public GVNode AddNode(GVID name, GVPort port)
+        {
+            GVNode node;
+            lock (NamedObjects)
+            {
+                if (NamedObjects.ContainsKey(name)) throw new GVException("Duplicated Identifier \"" + name + "\"");
+                node = new GVNode(name, port));
+                NamedObjects.Add(name, node);
+            }
+            lock (Nodes)
+            {
+                Nodes.Enqueue(node);
+            }
+            return node;
 
-        public GVGraph(GVID name, Type type) : this(name.ToString(), type) { }
+        }
 
-        public GVGraph(GVDouble name, Type type) : this(name.ToString(), type) { }
+        public GVNode AddNode(GVID name) { return AddNode(name, null); }
 
-        public GVGraph(GVInt name, Type type) : this(name.ToString(), type) { }
+        public GVNode AddEdge(bool isDirected)
+        {
+            GVEdge edge = new GVEdge(isDirected);
+            lock (Edges)
+            {
+                Edgess.Enqueue(edge);
+            }
+            return edge;
 
-        public GVGraph(HTML.String name, Type type) : this(name.ToString(), type) { }
+        }
+
+
     }
 
 
-    public abstract class GVValue : GVRoot { }
 
 
 
 
     public class GVNode : GVRoot
     {
+        public static GVAttributes.ID[] SupportedAttributes = {
+            GVAttributes.ID.URL,
+            GVAttributes.ID.Area,
+            GVAttributes.ID.Class,
+            GVAttributes.ID.Color,
+            GVAttributes.ID.Colorscheme,
+            GVAttributes.ID.Comment,
+            GVAttributes.ID.Distortion,
+            GVAttributes.ID.Fillcolor,
+            GVAttributes.ID.Fixedsize,
+            GVAttributes.ID.Fontcolor,
+            GVAttributes.ID.Fontname,
+            GVAttributes.ID.Fontsize,
+            GVAttributes.ID.Gradientangle,
+            GVAttributes.ID.Group,
+            GVAttributes.ID.Height,
+            GVAttributes.ID.Href,
+            GVAttributes.ID.Id,
+            GVAttributes.ID.Image,
+            GVAttributes.ID.Imagepos,
+            GVAttributes.ID.Imagescale,
+            GVAttributes.ID.Label,
+            GVAttributes.ID.Labelloc,
+            GVAttributes.ID.Layer,
+            GVAttributes.ID.Margin,
+            GVAttributes.ID.Nojustify,
+            GVAttributes.ID.Ordering,
+            GVAttributes.ID.Orientation,
+            GVAttributes.ID.Penwidth,
+            GVAttributes.ID.Peripheries,
+            GVAttributes.ID.Pin,
+            GVAttributes.ID.Pos,
+            GVAttributes.ID.Rects,
+            GVAttributes.ID.Regular,
+            GVAttributes.ID.Root,
+            GVAttributes.ID.Samplepoints,
+            GVAttributes.ID.Shape,
+            GVAttributes.ID.Shapefile,
+            GVAttributes.ID.Showboxes,
+            GVAttributes.ID.Sides,
+            GVAttributes.ID.Skew,
+            GVAttributes.ID.Sortv,
+            GVAttributes.ID.Style,
+            GVAttributes.ID.Target,
+            GVAttributes.ID.Tooltip,
+            GVAttributes.ID.Vertices,
+            GVAttributes.ID.Width,
+            GVAttributes.ID.Xlabel,
+            GVAttributes.ID.Xlp,
+            GVAttributes.ID.Z,
+        };
 
+
+    }
+
+    public class GVPort : GVRoot
+    {
+        public enum Compass
+        {
+            North = 0,
+            NorthEast,
+            East,
+            SouthEast,
+            South,
+            SouthWest,
+            West,
+            NorthWest,
+            Center,
+        }
+
+        public static string[] CompassText =
+        {
+            "n", "ne", "e", "se", "s", "sw", "w", "nw", "c"
+        };
+
+        private GVID name;
     }
 
     public class GVEdge : GVRoot
     {
-
+        public static GVAttributes.ID[] SupportedAttributes = {
+            GVAttributes.ID.URL,
+            GVAttributes.ID.Arrowhead,
+            GVAttributes.ID.Arrowsize,
+            GVAttributes.ID.Arrowtail,
+            GVAttributes.ID.Class,
+            GVAttributes.ID.Color,
+            GVAttributes.ID.Colorscheme,
+            GVAttributes.ID.Comment,
+            GVAttributes.ID.Constraint,
+            GVAttributes.ID.Decorate,
+            GVAttributes.ID.Dir,
+            GVAttributes.ID.EdgeURL,
+            GVAttributes.ID.Edgehref,
+            GVAttributes.ID.Edgetarget,
+            GVAttributes.ID.Edgetooltip,
+            GVAttributes.ID.Fillcolor,
+            GVAttributes.ID.Fontcolor,
+            GVAttributes.ID.Fontname,
+            GVAttributes.ID.Fontsize,
+            GVAttributes.ID.HeadURL,
+            GVAttributes.ID.Head_lp,
+            GVAttributes.ID.Headclip,
+            GVAttributes.ID.Headhref,
+            GVAttributes.ID.Headlabel,
+            GVAttributes.ID.Headport,
+            GVAttributes.ID.Headtarget,
+            GVAttributes.ID.Headtooltip,
+            GVAttributes.ID.Href,
+            GVAttributes.ID.Id,
+            GVAttributes.ID.Label,
+            GVAttributes.ID.LabelURL,
+            GVAttributes.ID.Labelangle,
+            GVAttributes.ID.Labeldistance,
+            GVAttributes.ID.Labelfloat,
+            GVAttributes.ID.Labelfontcolor,
+            GVAttributes.ID.Labelfontname,
+            GVAttributes.ID.Labelfontsize,
+            GVAttributes.ID.Labelhref,
+            GVAttributes.ID.Labeltarget,
+            GVAttributes.ID.Labeltooltip,
+            GVAttributes.ID.Layer,
+            GVAttributes.ID.Len,
+            GVAttributes.ID.Lhead,
+            GVAttributes.ID.Lp,
+            GVAttributes.ID.Ltail,
+            GVAttributes.ID.Minlen,
+            GVAttributes.ID.Nojustify,
+            GVAttributes.ID.Penwidth,
+            GVAttributes.ID.Pos,
+            GVAttributes.ID.Samehead,
+            GVAttributes.ID.Sametail,
+            GVAttributes.ID.Showboxes,
+            GVAttributes.ID.Style,
+            GVAttributes.ID.TailURL,
+            GVAttributes.ID.Tail_lp,
+            GVAttributes.ID.Tailclip,
+            GVAttributes.ID.Tailhref,
+            GVAttributes.ID.Taillabel,
+            GVAttributes.ID.Tailport,
+            GVAttributes.ID.Tailtarget,
+            GVAttributes.ID.Tailtooltip,
+            GVAttributes.ID.Target,
+            GVAttributes.ID.Tooltip,
+            GVAttributes.ID.Weight,
+            GVAttributes.ID.Xlabel,
+            GVAttributes.ID.Xlp,
+        };
     }
+
+    public abstract class GVValue : GVRoot { }
 
     public class GVAttributes
     {
